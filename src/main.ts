@@ -50,6 +50,10 @@ function loadFormFromStorage() {
       if (radio) radio.checked = true;
     } else if (f === 'chain') {
       if (isChainKey(stored)) ($(f) as HTMLSelectElement).value = stored;
+    } else if (f === 'startDate') {
+      // Upgrade pre-existing "YYYY-MM-DD" values to the datetime-local format.
+      const normalized = stored.length === 10 ? `${stored}T00:00:00` : stored;
+      ($(f) as HTMLInputElement).value = normalized;
     } else {
       ($(f) as HTMLInputElement).value = stored;
     }
@@ -95,7 +99,9 @@ function fmtAmount(amount: bigint, decimals: number): string {
 }
 
 function fmtDate(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
+  // YYYY-MM-DD HH:MM (UTC). Shown so intra-day ordering is visible when the
+  // user sets a sub-day start cutoff.
+  return new Date(ts).toISOString().replace('T', ' ').slice(0, 16);
 }
 
 function shortHash(h: `0x${string}`): string {
@@ -173,7 +179,7 @@ function renderResult(
 
   const salesRows =
     result.realizedSales.length === 0
-      ? `<tr><td colspan="5" class="muted">No outgoing transfers.</td></tr>`
+      ? `<tr><td colspan="6" class="muted">No outgoing transfers.</td></tr>`
       : result.realizedSales
           .map(
             (s) => `<tr>
@@ -186,6 +192,47 @@ function renderResult(
             </tr>`,
           )
           .join('');
+
+  const closedRow = (l: typeof result.closedLots[number]): string => {
+    const isInitial = l.source === 'initial' || l.txHash === INITIAL_TX_HASH;
+    const acquired = isInitial
+      ? l.acquiredAt > 0
+        ? `${fmtDate(l.acquiredAt)} <span class="muted">(initial)</span>`
+        : '<span class="muted">initial</span>'
+      : fmtDate(l.acquiredAt);
+    const closedCell =
+      l.firstSoldAt === l.lastSoldAt
+        ? fmtDate(l.lastSoldAt)
+        : `${fmtDate(l.firstSoldAt)}&nbsp;→&nbsp;${fmtDate(l.lastSoldAt)}`;
+    const costUsd = toFloat(l.originalAmount, decimals) * l.pricePerToken;
+    const pnl = l.proceedsUSD - costUsd;
+    const txCell = isInitial
+      ? '<span class="muted">seeded</span>'
+      : `<a href="${txLink(chain, l.txHash)}" target="_blank" rel="noopener">${shortHash(l.txHash)}</a>`;
+    return `<tr>
+      <td>${acquired}</td>
+      <td>${closedCell}</td>
+      <td class="num">${fmtAmount(l.originalAmount, decimals)}</td>
+      <td class="num">${fmtUSD(l.pricePerToken)}</td>
+      <td class="num">${fmtUSD(costUsd)}</td>
+      <td class="num">${fmtUSD(l.proceedsUSD)}</td>
+      <td class="num ${pnl >= 0 ? 'pos' : 'neg'}">${fmtUSD(pnl)}</td>
+      <td>${txCell}</td>
+    </tr>`;
+  };
+
+  const closedLotsHTML = result.averageSummary
+    ? ''
+    : `
+    <h3>Closed lots</h3>
+    <table>
+      <thead><tr><th>Acquired</th><th>Closed</th><th>Amount</th><th>Price/token</th><th>Cost</th><th>Proceeds</th><th>P&amp;L</th><th>Tx</th></tr></thead>
+      <tbody>${
+        result.closedLots.length === 0
+          ? `<tr><td colspan="8" class="muted">No fully consumed lots.</td></tr>`
+          : result.closedLots.map(closedRow).join('')
+      }</tbody>
+    </table>`;
 
   out.innerHTML = `
     <h2>${symbol} — ${method.toUpperCase()}</h2>
@@ -204,6 +251,7 @@ function renderResult(
       <thead><tr><th>Acquired</th><th>Amount</th><th>Price/token</th><th>Cost basis</th><th>Tx</th></tr></thead>
       <tbody>${lotsRows}</tbody>
     </table>
+    ${closedLotsHTML}
 
     <h3>Realized sales</h3>
     <table>
@@ -248,9 +296,17 @@ async function run() {
 
   let startMsFilter: number | null = null;
   if (startDateStr) {
-    const parsed = Date.parse(`${startDateStr}T00:00:00Z`);
+    // datetime-local format: "YYYY-MM-DDTHH:MM" or "YYYY-MM-DDTHH:MM:SS".
+    // Treat the entered value as UTC.
+    const isoUtc =
+      startDateStr.length === 10
+        ? `${startDateStr}T00:00:00Z`
+        : startDateStr.length === 16
+          ? `${startDateStr}:00Z`
+          : `${startDateStr}Z`;
+    const parsed = Date.parse(isoUtc);
     if (Number.isNaN(parsed)) {
-      setStatus('Invalid start date.', 'error');
+      setStatus('Invalid start time.', 'error');
       return;
     }
     startMsFilter = parsed;
