@@ -199,17 +199,21 @@ function renderResult(
       <tr><td>Realized P&amp;L</td><td class="num ${result.realizedPnLUSD >= 0 ? 'pos' : 'neg'}">${fmtUSD(result.realizedPnLUSD)}</td></tr>
     </table>
 
-    <h3>Open lots</h3>
-    <table>
-      <thead><tr><th>Acquired</th><th>Amount</th><th>Price/token</th><th>Cost basis</th><th>Tx</th></tr></thead>
-      <tbody>${lotsRows}</tbody>
-    </table>
+    <details open>
+      <summary><h3>Open lots</h3></summary>
+      <table>
+        <thead><tr><th>Acquired</th><th>Amount</th><th>Price/token</th><th>Cost basis</th><th>Tx</th></tr></thead>
+        <tbody>${lotsRows}</tbody>
+      </table>
+    </details>
 
-    <h3>Realized sales</h3>
-    <table>
-      <thead><tr><th>Date</th><th>Amount</th><th>Proceeds</th><th>Cost</th><th>P&amp;L</th><th>Tx</th></tr></thead>
-      <tbody>${salesRows}</tbody>
-    </table>
+    <details>
+      <summary><h3>Closed lots</h3></summary>
+      <table>
+        <thead><tr><th>Date</th><th>Amount</th><th>Proceeds</th><th>Cost</th><th>P&amp;L</th><th>Tx</th></tr></thead>
+        <tbody>${salesRows}</tbody>
+      </table>
+    </details>
   `;
 }
 

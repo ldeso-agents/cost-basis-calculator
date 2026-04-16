@@ -143,6 +143,11 @@
     section.explainer li { margin: 4px 0; }
     details { margin: 8px 0; }
     details summary { cursor: pointer; font-weight: 600; }
+    details > summary > h3 {
+      display: inline;
+      margin: 0;
+      font-size: 1em;
+    }
   </style>
 </head>
 <body>
@@ -332,7 +337,7 @@
       <li><strong>Open lots</strong> table &mdash; every still-held lot
         (FIFO/LIFO) or the averaged position (weighted average), with links
         to the acquiring transaction.</li>
-      <li><strong>Realized sales</strong> table &mdash; every outgoing
+      <li><strong>Closed lots</strong> table &mdash; every outgoing
         transfer with its proceeds, matched cost, P&amp;L, and a link to
         the transaction.</li>
     </ul>
