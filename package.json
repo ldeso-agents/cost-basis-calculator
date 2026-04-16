@@ -1,0 +1,19 @@
+{
+  "name": "cost-basis-calculator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && esbuild src/main.ts --bundle --format=esm --outfile=dist/bundle.js --target=es2022",
+    "watch": "esbuild src/main.ts --bundle --format=esm --outfile=dist/bundle.js --target=es2022 --watch",
+    "serve": "python3 -m http.server 8000"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
