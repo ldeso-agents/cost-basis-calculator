@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cost Basis Calculator (Base)</title>
+  <title>Cost Basis Calculator</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -45,7 +45,7 @@
     p.intro { color: var(--muted); }
     form { display: grid; gap: 12px; margin-bottom: 16px; }
     label { display: grid; gap: 4px; font-weight: 600; }
-    input[type="text"] {
+    input[type="text"], select {
       padding: 8px 10px;
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -109,13 +109,33 @@
     table.totals td:first-child { font-weight: 600; }
     a { color: var(--accent); }
     h2, h3 { margin-bottom: 4px; }
+    section.explainer {
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      color: var(--fg);
+    }
+    section.explainer h2 { margin-top: 20px; }
+    section.explainer h3 { margin-top: 16px; font-size: 1em; }
+    section.explainer code {
+      background: rgba(127, 127, 127, 0.15);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 0.92em;
+    }
+    section.explainer ol, section.explainer ul { padding-left: 20px; }
+    section.explainer li { margin: 4px 0; }
+    details { margin: 8px 0; }
+    details summary { cursor: pointer; font-weight: 600; }
   </style>
 </head>
 <body>
   <h1>Cost Basis Calculator</h1>
   <p class="intro">
-    Compute the cost basis of an ERC-20 token holding for a Base account.
-    Everything runs in your browser; the API key never leaves this page.
+    Compute the cost basis, realized proceeds, and realized P&amp;L of an
+    ERC-20 token holding for any account on Ethereum, Polygon, Base, Optimism,
+    or Arbitrum. Everything runs in your browser &mdash; the Alchemy API key is
+    used directly from this page and never sent anywhere else.
   </p>
 
   <form id="form">
@@ -128,8 +148,14 @@
       <input id="token" type="text" placeholder="0x…" autocomplete="off" required />
     </label>
     <label>
-      BASE_RPC_URL
-      <input id="rpcUrl" type="text" placeholder="https://base-mainnet.g.alchemy.com/v2/…" autocomplete="off" required />
+      Chain
+      <select id="chain" required>
+        <option value="ethereum">Ethereum</option>
+        <option value="polygon">Polygon</option>
+        <option value="base" selected>Base</option>
+        <option value="optimism">Optimism</option>
+        <option value="arbitrum">Arbitrum</option>
+      </select>
     </label>
     <label>
       ALCHEMY_API_KEY
@@ -146,6 +172,144 @@
 
   <div id="status"></div>
   <div id="results"></div>
+
+  <section class="explainer">
+    <h2>What is this?</h2>
+    <p>
+      This page computes the <strong>cost basis</strong> of a single ERC-20
+      token held by a single wallet on one of five EVM chains. The cost basis
+      is the USD amount you effectively paid to acquire the tokens you still
+      hold; combined with the USD value of tokens you have disposed of, it
+      lets you see your <strong>realized profit or loss</strong> over the
+      entire lifetime of the position.
+    </p>
+    <p>
+      Nothing is stored on a server. The page is a static HTML file plus a
+      bundled JavaScript module; the only network calls are made from your
+      browser directly to Alchemy&rsquo;s public API using the key you paste
+      in.
+    </p>
+
+    <h2>Inputs</h2>
+    <ul>
+      <li><strong>Account address</strong> &mdash; the wallet whose
+        transfers are replayed.</li>
+      <li><strong>Token address</strong> &mdash; the ERC-20 contract on the
+        selected chain.</li>
+      <li><strong>Chain</strong> &mdash; Ethereum, Polygon, Base, Optimism,
+        or Arbitrum. The RPC URL is built automatically from the chain and
+        the API key as
+        <code>https://&lt;network&gt;.g.alchemy.com/v2/&lt;ALCHEMY_API_KEY&gt;</code>,
+        so a single Alchemy key that covers the target network is all that
+        is needed.</li>
+      <li><strong>ALCHEMY_API_KEY</strong> &mdash; used both for the JSON-RPC
+        endpoint and for the Prices API. An Alchemy key is required because
+        the calculator uses Alchemy&rsquo;s non-standard
+        <code>alchemy_getAssetTransfers</code> method (standard
+        <code>eth_getLogs</code> is generally range-limited on public
+        endpoints and cannot scan entire histories).</li>
+      <li><strong>Method</strong> &mdash; which lot-selection rule to apply
+        when the account sends tokens out (see below).</li>
+    </ul>
+
+    <h2>How it computes the results</h2>
+    <ol>
+      <li><strong>Token metadata.</strong> The app calls the ERC-20 contract
+        on the selected chain for <code>decimals()</code>,
+        <code>symbol()</code>, and <code>balanceOf(account)</code>. The live
+        balance is later compared against the computed remaining amount to
+        flag tokens with non-standard transfer behaviour.</li>
+      <li><strong>Transfer history.</strong> Two paginated
+        <code>alchemy_getAssetTransfers</code> queries &mdash; one with
+        <code>toAddress = account</code> and one with
+        <code>fromAddress = account</code> &mdash; pull every ERC-20 transfer
+        in and out of the account for the given token, from block 0 to
+        latest. Each transfer is tagged with its direction, amount, block
+        number, transaction hash, and block timestamp.</li>
+      <li><strong>Ordering.</strong> All transfers are merged and sorted
+        strictly by block number, then by Alchemy&rsquo;s
+        <code>uniqueId</code> as a tie-breaker, so multiple transfers inside
+        the same block stay in a deterministic order.</li>
+      <li><strong>Daily USD prices.</strong> The app calls Alchemy&rsquo;s
+        Prices API (<code>/prices/v1/&lt;key&gt;/tokens/historical</code>)
+        for the token, on the selected <code>network</code>, with a
+        <code>1d</code> interval, spanning one day before the first transfer
+        to one day after the last. The time window is chunked into
+        365-day segments to stay within API limits. Each price point is the
+        token&rsquo;s USD value at that day.</li>
+      <li><strong>Pricing each transfer.</strong> For each transfer, the
+        nearest daily price point (by absolute time distance) is used as the
+        USD price of that token at that moment.</li>
+      <li><strong>Replay.</strong> Transfers are walked in chronological
+        order. Incoming transfers open a new <em>lot</em> (amount + price +
+        timestamp + tx hash). Outgoing transfers are treated as disposals:
+        their USD value becomes <em>proceeds</em>, and the lot-selection
+        method decides which previously-acquired tokens are considered sold
+        to produce the <em>cost</em>. The difference is the
+        <em>realized P&amp;L</em> for that disposal.</li>
+      <li><strong>Balance consistency check.</strong> After replay, the
+        computed remaining amount is compared against the on-chain
+        <code>balanceOf</code>. A mismatch is surfaced as a warning; it
+        typically indicates rebasing tokens, fee-on-transfer tokens, or
+        mint/burn outside the standard <code>Transfer</code> event.</li>
+    </ol>
+
+    <h2>Lot-selection methods</h2>
+    <p>When an outgoing transfer disposes of N tokens, the method chooses
+      which previously-acquired tokens are considered sold:</p>
+    <ul>
+      <li><strong>FIFO</strong> (first-in, first-out) &mdash; consumes the
+        oldest lots first. Tends to maximize realized gains in rising
+        markets because the lowest-cost tokens are sold first.</li>
+      <li><strong>LIFO</strong> (last-in, first-out) &mdash; consumes the
+        most recent lots first. Minimizes realized gains in rising markets
+        but is not accepted under all tax regimes.</li>
+      <li><strong>Weighted average</strong> &mdash; every outgoing transfer
+        is priced at the running average cost per token across all open
+        holdings. There is only ever a single &ldquo;lot&rdquo; in this
+        mode, and its price changes each time more tokens come in.</li>
+    </ul>
+
+    <h2>Output</h2>
+    <ul>
+      <li><strong>Remaining amount</strong> &mdash; tokens the account still
+        holds after the replay.</li>
+      <li><strong>Remaining cost basis (USD)</strong> &mdash; total USD
+        attributed to the remaining tokens. Divide by remaining amount to
+        get effective cost per token.</li>
+      <li><strong>Realized proceeds (USD)</strong> &mdash; sum of USD values
+        of all outgoing transfers at their time-of-transfer prices.</li>
+      <li><strong>Realized cost (USD)</strong> &mdash; sum of USD costs of
+        the lots consumed by those outgoing transfers, per the selected
+        method.</li>
+      <li><strong>Realized P&amp;L (USD)</strong> &mdash; proceeds minus
+        cost.</li>
+      <li><strong>Open lots</strong> table &mdash; every still-held lot
+        (FIFO/LIFO) or the averaged position (weighted average), with links
+        to the acquiring transaction.</li>
+      <li><strong>Realized sales</strong> table &mdash; every outgoing
+        transfer with its proceeds, matched cost, P&amp;L, and a link to
+        the transaction.</li>
+    </ul>
+
+    <h2>Assumptions &amp; limitations</h2>
+    <ul>
+      <li>Every outgoing transfer is treated as a disposal at the
+        time-of-transfer USD price. The calculator cannot distinguish a
+        wallet-to-wallet transfer between your own addresses from a true
+        sale &mdash; both look identical on-chain.</li>
+      <li>Prices are sampled at <strong>daily granularity</strong>. Intraday
+        price swings are smoothed.</li>
+      <li>If Alchemy&rsquo;s price feed does not cover the token on the
+        selected chain, the calculation stops with an error.</li>
+      <li>Tokens with rebases, transfer fees, or other non-standard
+        transfer logic may yield a computed balance that differs from the
+        on-chain <code>balanceOf</code>; the UI flags the mismatch but does
+        not attempt to reconcile it.</li>
+      <li>Gas costs and per-transfer fees are <em>not</em> factored into
+        cost basis or proceeds.</li>
+    </ul>
+  </section>
 
   <script type="module" src="dist/bundle.js"></script>
 </body>

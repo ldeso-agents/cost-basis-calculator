@@ -16,6 +16,7 @@ const MAX_DAYS_PER_REQUEST = 365;
 
 export async function fetchHistoricalPrices(
   apiKey: string,
+  network: string,
   token: Address,
   startMs: number,
   endMs: number,
@@ -40,7 +41,7 @@ export async function fetchHistoricalPrices(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        network: 'base-mainnet',
+        network,
         address: token,
         startTime: new Date(chunkStart).toISOString(),
         endTime: new Date(chunkEnd).toISOString(),
