@@ -7,7 +7,7 @@ import {
   type Address,
   type PublicClient,
 } from 'viem';
-import { base } from 'viem/chains';
+import { CHAINS, isChainKey, rpcUrlFor, type ChainConfig } from './chains.js';
 import { fetchTransfers } from './transfers.js';
 import { fetchHistoricalPrices, MS_PER_DAY, priceAt } from './prices.js';
 import {
@@ -19,7 +19,7 @@ import {
 
 const DEFAULT_METHOD: Method = 'fifo';
 
-const FORM_FIELDS = ['account', 'token', 'rpcUrl', 'alchemyKey', 'method'] as const;
+const FORM_FIELDS = ['account', 'token', 'chain', 'alchemyKey', 'method'] as const;
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -36,6 +36,8 @@ function loadFormFromStorage() {
         `input[name="method"][value="${stored}"]`,
       );
       if (radio) radio.checked = true;
+    } else if (f === 'chain') {
+      if (isChainKey(stored)) ($(f) as HTMLSelectElement).value = stored;
     } else {
       ($(f) as HTMLInputElement).value = stored;
     }
@@ -49,6 +51,8 @@ function saveFormToStorage() {
         'input[name="method"]:checked',
       );
       if (checked) sessionStorage.setItem(`cbc:${f}`, checked.value);
+    } else if (f === 'chain') {
+      sessionStorage.setItem(`cbc:${f}`, ($(f) as HTMLSelectElement).value);
     } else {
       sessionStorage.setItem(`cbc:${f}`, ($(f) as HTMLInputElement).value);
     }
@@ -86,12 +90,13 @@ function shortHash(h: `0x${string}`): string {
   return `${h.slice(0, 8)}…${h.slice(-6)}`;
 }
 
-function txLink(h: `0x${string}`): string {
-  return `https://basescan.org/tx/${h}`;
+function txLink(chain: ChainConfig, h: `0x${string}`): string {
+  return `${chain.explorerTxBase}/${h}`;
 }
 
 function renderResult(
   result: CostBasisResult,
+  chain: ChainConfig,
   symbol: string,
   decimals: number,
   liveBalance: bigint,
@@ -140,7 +145,7 @@ function renderResult(
           fmtDate(l.acquiredAt),
           l.amount,
           l.pricePerToken,
-          `<a href="${txLink(l.txHash)}" target="_blank" rel="noopener">${shortHash(l.txHash)}</a>`,
+          `<a href="${txLink(chain, l.txHash)}" target="_blank" rel="noopener">${shortHash(l.txHash)}</a>`,
         ),
       )
       .join('');
@@ -157,7 +162,7 @@ function renderResult(
               <td class="num">${fmtUSD(s.proceedsUSD)}</td>
               <td class="num">${fmtUSD(s.costUSD)}</td>
               <td class="num ${s.pnlUSD >= 0 ? 'pos' : 'neg'}">${fmtUSD(s.pnlUSD)}</td>
-              <td><a href="${txLink(s.txHash)}" target="_blank" rel="noopener">${shortHash(s.txHash)}</a></td>
+              <td><a href="${txLink(chain, s.txHash)}" target="_blank" rel="noopener">${shortHash(s.txHash)}</a></td>
             </tr>`,
           )
           .join('');
@@ -194,7 +199,7 @@ async function run() {
 
   const account = ($('account') as HTMLInputElement).value.trim();
   const token = ($('token') as HTMLInputElement).value.trim();
-  const rpcUrl = ($('rpcUrl') as HTMLInputElement).value.trim();
+  const chainKey = ($('chain') as HTMLSelectElement).value;
   const alchemyKey = ($('alchemyKey') as HTMLInputElement).value.trim();
   const method = (
     document.querySelector<HTMLInputElement>('input[name="method"]:checked')
@@ -209,21 +214,23 @@ async function run() {
     setStatus('Invalid token address.', 'error');
     return;
   }
-  if (!rpcUrl) {
-    setStatus('BASE_RPC_URL is required.', 'error');
+  if (!isChainKey(chainKey)) {
+    setStatus('Invalid chain selection.', 'error');
     return;
   }
   if (!alchemyKey) {
     setStatus('ALCHEMY_API_KEY is required.', 'error');
     return;
   }
+  const chain = CHAINS[chainKey];
+  const rpcUrl = rpcUrlFor(chain, alchemyKey);
 
   const button = $('go') as HTMLButtonElement;
   button.disabled = true;
 
   try {
     const client = createPublicClient({
-      chain: base,
+      chain: chain.viemChain,
       transport: http(rpcUrl),
     }) as PublicClient;
 
@@ -248,6 +255,7 @@ async function run() {
       setStatus('No transfers found for this account/token.', 'info');
       renderResult(
         computeCostBasis([], decimals, () => 0, method),
+        chain,
         symbol,
         decimals,
         liveBalance,
@@ -259,6 +267,7 @@ async function run() {
     const endMs = transfers[transfers.length - 1]!.timestamp + MS_PER_DAY;
     const prices = await fetchHistoricalPrices(
       alchemyKey,
+      chain.pricesNetwork,
       tokenAddr,
       startMs,
       endMs,
@@ -283,7 +292,7 @@ async function run() {
       method,
     );
 
-    renderResult(result, symbol, decimals, liveBalance);
+    renderResult(result, chain, symbol, decimals, liveBalance);
     setStatus(
       `Done. ${transfers.length} transfers processed, ${result.realizedSales.length} sales realized.`,
     );
