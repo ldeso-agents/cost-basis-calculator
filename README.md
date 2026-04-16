@@ -69,10 +69,12 @@ Fields:
 - **Initial cost basis (USD)** — total USD cost attributed to that
   balance. The per-token price of the seeded lot is derived as
   `cost basis / amount`.
-- **Start date (UTC, optional)** — transfers strictly before this date
-  are excluded. Use a date on or after the migration so the migration-in
-  transfer of the new token is not double-counted against the seeded
-  balance.
+- **Start time (UTC, optional)** — transfers with a block timestamp
+  strictly before this instant are excluded. Precision is to the second,
+  so two transactions in the same block timeframe can be split on either
+  side of the cutoff. Use a time on or after the migration so the
+  migration-in transfer of the new token is not double-counted against
+  the seeded balance.
 
 Behaviour:
 - FIFO/LIFO: one synthetic "initial" lot is pushed first. It is consumed
@@ -81,7 +83,21 @@ Behaviour:
   running average before the first transfer is processed.
 - When an initial amount is seeded, the computed remaining amount is
   expected to exceed the on-chain `balanceOf` unless you also set a
-  start date that excludes the pre-existing balance's origin transfer.
+  start time that excludes the pre-existing balance's origin transfer.
+
+## Output: open and closed lots
+
+Under FIFO and LIFO the results page shows two lot tables:
+
+- **Open lots** — acquisitions that still have tokens remaining.
+- **Closed lots** — acquisitions that have been fully consumed by
+  disposals, with original amount, cost, accumulated proceeds, and
+  realized P&L for the lot. The `Closed` column shows the first → last
+  disposal time of that lot; cross-reference the `Realized sales` table
+  by tx hash for the per-disposal breakdown.
+
+Weighted average has no lot concept, so both tables are omitted for that
+method.
 
 ## Notes & limitations
 

@@ -4,11 +4,15 @@ import type { Transfer } from './transfers.js';
 export type Method = 'fifo' | 'lifo' | 'average';
 
 export interface Lot {
-  amount: bigint;
-  pricePerToken: number;
+  amount: bigint;              // remaining (0 for closed lots)
+  originalAmount: bigint;      // amount at acquisition
+  pricePerToken: number;       // acquisition price/token
   acquiredAt: number;
   txHash: `0x${string}`;
   source?: 'initial';
+  proceedsUSD: number;         // USD proceeds accumulated from disposals of this lot
+  firstSoldAt: number;         // timestamp of first disposal; 0 if untouched
+  lastSoldAt: number;          // timestamp of last disposal; 0 if untouched
 }
 
 export interface RealizedSale {
@@ -37,6 +41,7 @@ export const INITIAL_TX_HASH =
 export interface CostBasisResult {
   method: Method;
   remainingLots: Lot[];           // empty for 'average'
+  closedLots: Lot[];              // fully consumed lots (empty for 'average')
   averageSummary: AverageSummary | null; // populated only for 'average' when amount > 0
   remainingAmount: bigint;
   remainingCostBasisUSD: number;
@@ -61,7 +66,8 @@ export function computeCostBasis(
   initial?: InitialState,
 ): CostBasisResult {
   const lots: Lot[] = [];
-  let lotsHead = 0; // amortized O(1) FIFO drain instead of shift()
+  let lotsHead = 0; // FIFO: index of the oldest lot with amount > 0
+  let lotsTail = -1; // LIFO: index of the newest lot with amount > 0
   const sales: RealizedSale[] = [];
   const warnings: string[] = [];
 
@@ -71,6 +77,24 @@ export function computeCostBasis(
   let runningHeld = 0n;
   let avgTotalCostScaled = 0n;
 
+  const pushLot = (l: Omit<Lot, 'originalAmount' | 'proceedsUSD' | 'firstSoldAt' | 'lastSoldAt'>) => {
+    lots.push({
+      ...l,
+      originalAmount: l.amount,
+      proceedsUSD: 0,
+      firstSoldAt: 0,
+      lastSoldAt: 0,
+    });
+    lotsTail = lots.length - 1;
+  };
+
+  const consumeLot = (lot: Lot, take: bigint, takeFloat: number, price: number, ts: number) => {
+    lot.amount -= take;
+    lot.proceedsUSD += takeFloat * price;
+    if (lot.firstSoldAt === 0) lot.firstSoldAt = ts;
+    lot.lastSoldAt = ts;
+  };
+
   if (initial && initial.amount > 0n) {
     const amountFloat = toFloat(initial.amount, decimals);
     const price = amountFloat > 0 ? initial.costBasisUSD / amountFloat : 0;
@@ -78,7 +102,7 @@ export function computeCostBasis(
     if (method === 'average') {
       avgTotalCostScaled += initial.amount * BigInt(Math.round(price * PRICE_SCALE_NUM));
     } else {
-      lots.push({
+      pushLot({
         amount: initial.amount,
         pricePerToken: price,
         acquiredAt: initial.asOf,
@@ -97,7 +121,7 @@ export function computeCostBasis(
       if (method === 'average') {
         avgTotalCostScaled += t.amount * BigInt(Math.round(price * PRICE_SCALE_NUM));
       } else {
-        lots.push({
+        pushLot({
           amount: t.amount,
           pricePerToken: price,
           acquiredAt: t.timestamp,
@@ -127,20 +151,22 @@ export function computeCostBasis(
       while (remaining > 0n && lotsHead < lots.length) {
         const lot = lots[lotsHead]!;
         const take = remaining < lot.amount ? remaining : lot.amount;
-        cost += toFloat(take, decimals) * lot.pricePerToken;
-        lot.amount -= take;
+        const takeFloat = toFloat(take, decimals);
+        cost += takeFloat * lot.pricePerToken;
+        consumeLot(lot, take, takeFloat, price, t.timestamp);
         remaining -= take;
         if (lot.amount === 0n) lotsHead++;
       }
     } else if (method === 'lifo') {
       let remaining = toSell;
-      while (remaining > 0n && lots.length > lotsHead) {
-        const lot = lots[lots.length - 1]!;
+      while (remaining > 0n && lotsTail >= 0) {
+        const lot = lots[lotsTail]!;
         const take = remaining < lot.amount ? remaining : lot.amount;
-        cost += toFloat(take, decimals) * lot.pricePerToken;
-        lot.amount -= take;
+        const takeFloat = toFloat(take, decimals);
+        cost += takeFloat * lot.pricePerToken;
+        consumeLot(lot, take, takeFloat, price, t.timestamp);
         remaining -= take;
-        if (lot.amount === 0n) lots.pop();
+        if (lot.amount === 0n) lotsTail--;
       }
     } else {
       // Average: derive cost directly from running scaled state for precision.
@@ -172,6 +198,7 @@ export function computeCostBasis(
     return {
       method,
       remainingLots: [],
+      closedLots: [],
       averageSummary:
         runningHeld > 0n ? { amount: runningHeld, pricePerToken: avgPrice } : null,
       remainingAmount: runningHeld,
@@ -184,13 +211,20 @@ export function computeCostBasis(
     };
   }
 
-  const openLots = lots.slice(lotsHead);
+  const openLots: Lot[] = [];
+  const closedLots: Lot[] = [];
+  for (const l of lots) {
+    if (l.amount === 0n) closedLots.push(l);
+    else openLots.push(l);
+  }
+
   let remainingCost = 0;
   for (const l of openLots) remainingCost += toFloat(l.amount, decimals) * l.pricePerToken;
 
   return {
     method,
     remainingLots: openLots,
+    closedLots,
     averageSummary: null,
     remainingAmount: runningHeld,
     remainingCostBasisUSD: remainingCost,
