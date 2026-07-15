@@ -28,11 +28,12 @@ build-time tools.
 
 ```sh
 npm install
-npm run build       # type-check, then bundle src/main.ts → dist/bundle.js
+npm run build       # type-check, then bundle src/{main,transactions}.ts → dist/
 ```
 
-The output is two static files: `index.html` and `dist/bundle.js`. Drop
-them on any static host (GitHub Pages, IPFS, S3, `python3 -m http.server`).
+The output is static files: `index.html`, `transactions.html`, and
+`dist/*.js`. Drop them on any static host (GitHub Pages, IPFS, S3,
+`python3 -m http.server`).
 
 ## Run locally
 
@@ -53,6 +54,39 @@ export CHAIN=base   # or ethereum, polygon, optimism, arbitrum
 npx esbuild test/smoke.ts --bundle --format=esm --platform=node \
   --target=node20 --outfile=test/smoke.bundle.mjs
 node test/smoke.bundle.mjs <account> [token] [fifo|lifo|average]
+```
+
+## Transaction CSV export
+
+`transactions.html` is a companion page that downloads **every transaction
+touching an address between two dates** as a CSV — native-currency
+transfers (external and, where supported, internal), ERC-20, ERC-721, and
+ERC-1155, in both directions.
+
+1. You provide an account address, pick the chain, paste your
+   `ALCHEMY_API_KEY`, and optionally set **from**/**to** times (UTC).
+   Blank bounds mean "from genesis" / "up to now".
+2. The date window is resolved to an exact block range by binary-searching
+   block timestamps over the RPC endpoint.
+3. Two paginated `alchemy_getAssetTransfers` queries (`toAddress` and
+   `fromAddress`) pull every transfer in the range across all categories
+   the network supports; unsupported categories are dropped automatically.
+4. Rows are de-duplicated (self-transfers appear once with direction
+   `self`), ERC-1155 batches are expanded to one row per token id, and the
+   result is sorted by block number, previewed, and downloaded as CSV.
+
+Columns: `timestamp_utc`, `block_number`, `tx_hash`, `direction`, `from`,
+`to`, `category`, `asset`, `amount`, `raw_value`, `contract_address`,
+`token_id`, `unique_id`.
+
+A CLI smoke test for this pipeline lives at `test/txhistory-smoke.ts`:
+
+```sh
+export ALCHEMY_API_KEY=YOUR_KEY
+export CHAIN=base
+npx esbuild test/txhistory-smoke.ts --bundle --format=esm --platform=node \
+  --target=node20 --outfile=test/txhistory-smoke.bundle.mjs
+node test/txhistory-smoke.bundle.mjs <account> [fromISO] [toISO] [out.csv]
 ```
 
 ## Seeding an initial cost basis (e.g. after a token migration)
