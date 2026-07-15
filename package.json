@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && esbuild src/main.ts --bundle --format=esm --outfile=dist/bundle.js --target=es2022",
-    "watch": "esbuild src/main.ts --bundle --format=esm --outfile=dist/bundle.js --target=es2022 --watch",
+    "build": "tsc --noEmit && esbuild src/main.ts src/transactions.ts --bundle --format=esm --outdir=dist --target=es2022",
+    "watch": "esbuild src/main.ts src/transactions.ts --bundle --format=esm --outdir=dist --target=es2022 --watch",
     "serve": "python3 -m http.server 8000"
   },
   "dependencies": {

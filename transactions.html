@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transaction CSV Export</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #fafafa;
+      --fg: #111;
+      --muted: #666;
+      --border: #ddd;
+      --accent: #0057ff;
+      --warn-bg: #fff7d6;
+      --warn-fg: #6a4f00;
+      --err: #b21f1f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111;
+        --fg: #eee;
+        --muted: #999;
+        --border: #333;
+        --accent: #6ea8ff;
+        --warn-bg: #3a2d00;
+        --warn-fg: #ffe48a;
+        --err: #f87171;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font: 14px/1.5 system-ui, -apple-system, sans-serif;
+      margin-inline: auto;
+      padding: 24px;
+      max-width: 960px;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    h1 { margin-top: 0; }
+    p.intro { color: var(--muted); }
+    nav.crumbs { margin-bottom: 16px; }
+    form { display: grid; gap: 12px; margin-bottom: 16px; }
+    label { display: grid; gap: 4px; font-weight: 600; }
+    input[type="text"], input[type="datetime-local"], select {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font: inherit;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    button {
+      padding: 10px 16px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      justify-self: start;
+    }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    #status {
+      min-height: 1.5em;
+      padding: 8px 0;
+      color: var(--muted);
+    }
+    #status[data-kind="error"] { color: var(--err); font-weight: 600; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 24px;
+    }
+    th, td {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted); }
+    a { color: var(--accent); }
+    h2 { margin-bottom: 4px; }
+    section.explainer {
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    section.explainer code {
+      background: rgba(127, 127, 127, 0.15);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 0.92em;
+    }
+    section.explainer ul { padding-left: 20px; }
+    section.explainer li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <nav class="crumbs"><a href="index.html">&larr; Cost Basis Calculator</a></nav>
+  <h1>Transaction CSV Export</h1>
+  <p class="intro">
+    Download every transaction touching an address on Ethereum, Polygon, Base,
+    Optimism, or Arbitrum between two dates as a CSV file. Everything runs in
+    your browser &mdash; the Alchemy API key is used directly from this page
+    and never sent anywhere else.
+  </p>
+
+  <form id="form">
+    <label>
+      Account address
+      <input id="account" type="text" placeholder="0x…" autocomplete="off" required />
+    </label>
+    <label>
+      Chain
+      <select id="chain" required>
+        <option value="ethereum">Ethereum</option>
+        <option value="polygon">Polygon</option>
+        <option value="base" selected>Base</option>
+        <option value="optimism">Optimism</option>
+        <option value="arbitrum">Arbitrum</option>
+      </select>
+    </label>
+    <label>
+      ALCHEMY_API_KEY
+      <input id="alchemyKey" type="text" placeholder="alchemy api key" autocomplete="off" required />
+    </label>
+    <label>
+      From (UTC, optional &mdash; blank = from genesis)
+      <input id="txFrom" type="datetime-local" step="1" autocomplete="off" />
+    </label>
+    <label>
+      To (UTC, optional &mdash; blank = up to now)
+      <input id="txTo" type="datetime-local" step="1" autocomplete="off" />
+    </label>
+    <button id="go" type="submit">Download CSV</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="results"></div>
+
+  <section class="explainer">
+    <h2>What is this?</h2>
+    <p>
+      This page exports the full on-chain activity of a single address in a
+      given time window: native-currency transfers (external and, where the
+      network supports it, internal), ERC-20, ERC-721, and ERC-1155 token
+      transfers, both incoming and outgoing. The result downloads as a CSV
+      you can open in any spreadsheet or feed into other tooling.
+    </p>
+
+    <h2>How it works</h2>
+    <ul>
+      <li>The <strong>from</strong>/<strong>to</strong> times (interpreted as
+        UTC) are resolved to an exact block range by binary-searching block
+        timestamps over the RPC endpoint
+        (<code>https://&lt;network&gt;.g.alchemy.com/v2/&lt;ALCHEMY_API_KEY&gt;</code>).
+        Leave either blank for an open-ended window.</li>
+      <li>Two paginated <code>alchemy_getAssetTransfers</code> queries
+        (one for <code>toAddress</code>, one for <code>fromAddress</code>)
+        pull every transfer in the block range across all categories the
+        selected network supports.</li>
+      <li>Rows are de-duplicated (a self-transfer is reported once, with
+        direction <code>self</code>), ERC-1155 batch transfers are expanded
+        to one row per token id, and everything is sorted by block number.</li>
+    </ul>
+
+    <h2>CSV columns</h2>
+    <p>
+      <code>timestamp_utc</code>, <code>block_number</code>,
+      <code>tx_hash</code>, <code>direction</code> (<code>in</code> /
+      <code>out</code> / <code>self</code>), <code>from</code>,
+      <code>to</code>, <code>category</code> (<code>external</code>,
+      <code>internal</code>, <code>erc20</code>, <code>erc721</code>,
+      <code>erc1155</code>, <code>specialnft</code>), <code>asset</code>
+      (symbol), <code>amount</code> (decimal-adjusted),
+      <code>raw_value</code> (unadjusted hex amount, useful when Alchemy
+      does not know a token&rsquo;s decimals and <code>amount</code> is
+      empty), <code>contract_address</code>, <code>token_id</code>,
+      <code>unique_id</code> (Alchemy's stable transfer identifier).
+    </p>
+
+    <h2>Notes &amp; limitations</h2>
+    <ul>
+      <li>An <strong>Alchemy</strong> API key is required because
+        <code>alchemy_getAssetTransfers</code> is a custom Alchemy method.</li>
+      <li>One transaction can produce several rows (e.g. a swap emits an
+        outgoing and an incoming token transfer); <code>tx_hash</code> groups
+        them.</li>
+      <li>Amounts are the decimal-adjusted values reported by Alchemy;
+        gas costs are not included as separate rows.</li>
+      <li>Categories not supported by the selected network (e.g.
+        <code>internal</code> on some chains) are skipped automatically.</li>
+    </ul>
+  </section>
+
+  <script type="module" src="dist/transactions.js"></script>
+</body>
+</html>
