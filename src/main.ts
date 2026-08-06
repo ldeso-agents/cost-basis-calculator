@@ -1,7 +1,6 @@
 import {
   createPublicClient,
   erc20Abi,
-  formatUnits,
   http,
   isAddress,
   parseUnits,
@@ -19,6 +18,18 @@ import {
   type InitialState,
   type Method,
 } from './costBasis.js';
+import {
+  $,
+  fmtAmount,
+  fmtDate,
+  fmtUSD,
+  loadField,
+  parseUtcInput,
+  saveField,
+  setStatus,
+  shortHash,
+  txLink,
+} from './ui.js';
 
 const DEFAULT_METHOD: Method = 'fifo';
 
@@ -33,15 +44,9 @@ const FORM_FIELDS = [
   'startDate',
 ] as const;
 
-function $(id: string): HTMLElement {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`Missing element #${id}`);
-  return el;
-}
-
 function loadFormFromStorage() {
   for (const f of FORM_FIELDS) {
-    const stored = sessionStorage.getItem(`cbc:${f}`);
+    const stored = loadField(f);
     if (stored == null) continue;
     if (f === 'method') {
       const radio = document.querySelector<HTMLInputElement>(
@@ -66,50 +71,11 @@ function saveFormToStorage() {
       const checked = document.querySelector<HTMLInputElement>(
         'input[name="method"]:checked',
       );
-      if (checked) sessionStorage.setItem(`cbc:${f}`, checked.value);
-    } else if (f === 'chain') {
-      sessionStorage.setItem(`cbc:${f}`, ($(f) as HTMLSelectElement).value);
+      if (checked) saveField(f, checked.value);
     } else {
-      sessionStorage.setItem(`cbc:${f}`, ($(f) as HTMLInputElement).value);
+      saveField(f, ($(f) as HTMLInputElement | HTMLSelectElement).value);
     }
   }
-}
-
-function setStatus(msg: string, kind: 'info' | 'error' = 'info') {
-  const el = $('status');
-  el.textContent = msg;
-  el.dataset.kind = kind;
-}
-
-function fmtUSD(n: number): string {
-  return n.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function fmtAmount(amount: bigint, decimals: number): string {
-  const s = formatUnits(amount, decimals);
-  const n = Number(s);
-  if (n === 0) return '0';
-  if (n < 0.0001) return n.toExponential(4);
-  return n.toLocaleString('en-US', { maximumFractionDigits: 6 });
-}
-
-function fmtDate(ts: number): string {
-  // YYYY-MM-DD HH:MM (UTC). Shown so intra-day ordering is visible when the
-  // user sets a sub-day start cutoff.
-  return new Date(ts).toISOString().replace('T', ' ').slice(0, 16);
-}
-
-function shortHash(h: `0x${string}`): string {
-  return `${h.slice(0, 8)}…${h.slice(-6)}`;
-}
-
-function txLink(chain: ChainConfig, h: `0x${string}`): string {
-  return `${chain.explorerTxBase}/${h}`;
 }
 
 function renderResult(
@@ -300,22 +266,10 @@ async function run() {
     return;
   }
 
-  let startMsFilter: number | null = null;
-  if (startDateStr) {
-    // datetime-local format: "YYYY-MM-DDTHH:MM" or "YYYY-MM-DDTHH:MM:SS".
-    // Treat the entered value as UTC.
-    const isoUtc =
-      startDateStr.length === 10
-        ? `${startDateStr}T00:00:00Z`
-        : startDateStr.length === 16
-          ? `${startDateStr}:00Z`
-          : `${startDateStr}Z`;
-    const parsed = Date.parse(isoUtc);
-    if (Number.isNaN(parsed)) {
-      setStatus('Invalid start time.', 'error');
-      return;
-    }
-    startMsFilter = parsed;
+  const startMsFilter = parseUtcInput(startDateStr);
+  if (startMsFilter != null && Number.isNaN(startMsFilter)) {
+    setStatus('Invalid start time.', 'error');
+    return;
   }
 
   const initialCostUSD = initialCostStr ? Number(initialCostStr) : 0;
