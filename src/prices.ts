@@ -69,6 +69,58 @@ export async function fetchHistoricalPrices(
   return points;
 }
 
+// How far back to look for a daily price point when sampling a single day.
+// Three days of slack covers a token whose feed has an occasional gap.
+const LOOKBACK_DAYS = 3;
+const PRICE_CONCURRENCY = 5;
+
+// One-day USD price for many tokens at once, keyed by lowercased address.
+// A token Alchemy cannot price is simply absent from the map — an unpriceable
+// token must not abort a whole portfolio snapshot.
+export async function fetchPricesAt(
+  apiKey: string,
+  network: string,
+  tokens: Address[],
+  atMs: number,
+  onProgress?: (msg: string) => void,
+): Promise<Map<string, number>> {
+  const unique = [...new Set(tokens.map((t) => t.toLowerCase()))] as Address[];
+  const prices = new Map<string, number>();
+  if (unique.length === 0) return prices;
+
+  const startMs = atMs - LOOKBACK_DAYS * MS_PER_DAY;
+  const endMs = atMs + MS_PER_DAY;
+  let done = 0;
+  let next = 0;
+
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= unique.length) return;
+      const token = unique[i]!;
+      try {
+        const points = await fetchHistoricalPrices(
+          apiKey,
+          network,
+          token,
+          startMs,
+          endMs,
+        );
+        if (points.length > 0) prices.set(token.toLowerCase(), priceAt(points, atMs));
+      } catch {
+        // Leave unpriced; the caller reports it.
+      }
+      done++;
+      onProgress?.(`Fetching prices… ${done}/${unique.length} tokens`);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(PRICE_CONCURRENCY, unique.length) }, worker),
+  );
+  return prices;
+}
+
 export function priceAt(points: PricePoint[], ts: number): number {
   if (points.length === 0) return 0;
   if (ts <= points[0]!.timestamp) return points[0]!.value;

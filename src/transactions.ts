@@ -7,6 +7,16 @@ import {
 } from 'viem';
 import { CHAINS, isChainKey, rpcUrlFor, type ChainConfig } from './chains.js';
 import { fetchTxHistory, findBlockRange, toCSV, type TxRecord } from './txHistory.js';
+import {
+  $,
+  fmtDateTime,
+  loadField,
+  parseUtcInput,
+  saveField,
+  setStatus,
+  shortAddr,
+  shortHash,
+} from './ui.js';
 
 const PREVIEW_ROWS = 50;
 
@@ -14,15 +24,9 @@ const PREVIEW_ROWS = 50;
 // values entered on one page carry over to the other.
 const FORM_FIELDS = ['account', 'chain', 'alchemyKey', 'txFrom', 'txTo'] as const;
 
-function $(id: string): HTMLElement {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`Missing element #${id}`);
-  return el;
-}
-
 function loadFormFromStorage() {
   for (const f of FORM_FIELDS) {
-    const stored = sessionStorage.getItem(`cbc:${f}`);
+    const stored = loadField(f);
     if (stored == null) continue;
     if (f === 'chain') {
       if (isChainKey(stored)) ($(f) as HTMLSelectElement).value = stored;
@@ -34,43 +38,8 @@ function loadFormFromStorage() {
 
 function saveFormToStorage() {
   for (const f of FORM_FIELDS) {
-    sessionStorage.setItem(
-      `cbc:${f}`,
-      ($(f) as HTMLInputElement | HTMLSelectElement).value,
-    );
+    saveField(f, ($(f) as HTMLInputElement | HTMLSelectElement).value);
   }
-}
-
-function setStatus(msg: string, kind: 'info' | 'error' = 'info') {
-  const el = $('status');
-  el.textContent = msg;
-  el.dataset.kind = kind;
-}
-
-// datetime-local value ("YYYY-MM-DD", "…THH:MM", or "…THH:MM:SS"),
-// interpreted as UTC. Returns null for an empty field, NaN when unparsable.
-function parseUtcInput(value: string): number | null {
-  if (!value) return null;
-  const isoUtc =
-    value.length === 10
-      ? `${value}T00:00:00Z`
-      : value.length === 16
-        ? `${value}:00Z`
-        : `${value}Z`;
-  return Date.parse(isoUtc);
-}
-
-function fmtDate(ts: number): string {
-  return new Date(ts).toISOString().replace('T', ' ').slice(0, 19);
-}
-
-function shortHash(h: string): string {
-  return `${h.slice(0, 8)}…${h.slice(-6)}`;
-}
-
-function shortAddr(a: string | null): string {
-  if (!a) return '—';
-  return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
 function downloadCSV(csv: string, filename: string) {
@@ -95,7 +64,7 @@ function renderPreview(records: TxRecord[], chain: ChainConfig) {
     .slice(0, PREVIEW_ROWS)
     .map(
       (r) => `<tr>
-        <td>${fmtDate(r.timestamp)}</td>
+        <td>${fmtDateTime(r.timestamp)}</td>
         <td>${r.direction}</td>
         <td>${r.category}</td>
         <td>${r.asset ?? '—'}</td>

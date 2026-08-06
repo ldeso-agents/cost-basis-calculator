@@ -4,6 +4,11 @@ A single-page, fully client-side calculator that computes the **cost basis**
 of an ERC-20 token holding for any account on **Ethereum, Polygon, Base,
 Optimism, or Arbitrum**, using FIFO, LIFO, or weighted-average accounting.
 
+Two companion pages share the same plumbing: a **transaction CSV export**
+(`transactions.html`) and a **portfolio rewind** (`portfolio.html`) that
+reconstructs everything an address held on a past date — token balances and
+AMM liquidity positions alike — with their USD values that day.
+
 Everything runs in the browser. Your Alchemy API key never leaves the page.
 
 ## How it works
@@ -31,9 +36,9 @@ npm install
 npm run build       # type-check, then bundle src/{main,transactions}.ts → dist/
 ```
 
-The output is static files: `index.html`, `transactions.html`, and
-`dist/*.js`. Drop them on any static host (GitHub Pages, IPFS, S3,
-`python3 -m http.server`).
+The output is static files: `index.html`, `transactions.html`,
+`portfolio.html`, and `dist/*.js`. Drop them on any static host (GitHub Pages,
+IPFS, S3, `python3 -m http.server`).
 
 ## Run locally
 
@@ -87,6 +92,83 @@ export CHAIN=base
 npx esbuild test/txhistory-smoke.ts --bundle --format=esm --platform=node \
   --target=node20 --outfile=test/txhistory-smoke.bundle.mjs
 node test/txhistory-smoke.bundle.mjs <account> [fromISO] [toISO] [out.csv]
+```
+
+## Portfolio rewind
+
+`portfolio.html` reconstructs **what an address held at a past instant**: every
+token balance at that block with its USD value that day, plus every AMM
+liquidity position broken out into the underlying tokens it was worth.
+
+1. You provide an account address, pick the chain, paste your
+   `ALCHEMY_API_KEY`, and set the UTC instant to rewind to. An optional
+   textarea takes extra token addresses for balances the history scan cannot
+   see.
+2. The instant is resolved to the last block at or before it, by binary-search
+   over block timestamps.
+3. A full `alchemy_getAssetTransfers` scan up to that block establishes which
+   token and NFT contracts the account has ever touched.
+4. Every balance is read **on-chain at that block** (`balanceOf`,
+   `eth_getBalance`), batched through Multicall3 where it is available and
+   falling back to individual calls otherwise. Reading real state rather than
+   summing transfer deltas keeps rebasing and yield-bearing tokens correct.
+5. Liquidity positions are detected by contract *shape*, not by a hardcoded
+   address list, so forks are picked up without a registry.
+6. Daily USD prices for that date come from the Prices API, one request per
+   distinct token, including both sides of every pool.
+
+### Liquidity positions
+
+**V2-style LP tokens** — an LP balance is a pro-rata claim on the reserves, so
+each side is `lpBalance × reserve / totalSupply`, all read at the target block.
+Detected by probing `token0()` / `token1()` / `getReserves()`. Covers Uniswap
+V2, SushiSwap, PancakeSwap V2, Aerodrome and Velodrome. The LP token is
+reported as a position instead of as a plain holding, so nothing is
+double-counted.
+
+**V3-style NFT positions** — concentrated liquidity has no fixed split: the
+same position is all token0 below its range, all token1 above it, and a mix in
+between. `positions(tokenId)` and the pool's `slot0()` price are read at the
+target block and run through Uniswap's `LiquidityAmounts` math (ported to
+bigint in `src/tickMath.ts`), with an in-range/out-of-range flag. Ownership is
+re-checked with `ownerOf` at that block, so positions later sold or burned
+correctly disappear. Uncollected fees are computed in full from the pool's
+fee-growth accumulators rather than just the `tokensOwed` checkpoint.
+
+### Limitations specific to this page
+
+- Historical `eth_call` requires **archive** access on the RPC endpoint.
+- LP tokens **staked in a gauge or farm** (common on Aerodrome/Velodrome) are
+  held by the gauge rather than the wallet, so `balanceOf` reports zero and the
+  position is missed.
+- ERC-1155 balances are discovered but not valued; plain NFTs are not valued
+  either — only liquidity positions are read from NFT contracts.
+- Assets that arrived without a transfer event are invisible to the discovery
+  scan; paste those contracts into **extra token addresses**.
+- Forks whose position manager uses a different `positions()` layout are
+  skipped with a note rather than reported wrongly.
+- The full-history scan makes the first run slow for very active wallets.
+
+A CLI smoke test lives at `test/portfolio-smoke.ts`:
+
+```sh
+export ALCHEMY_API_KEY=YOUR_KEY
+export CHAIN=base
+npx esbuild test/portfolio-smoke.ts --bundle --format=esm --platform=node \
+  --target=node20 --outfile=test/portfolio-smoke.bundle.mjs
+node test/portfolio-smoke.bundle.mjs <account> <asOfISO>
+```
+
+The concentrated-liquidity math has an offline check that needs no API key —
+it verifies `getSqrtRatioAtTick` against Uniswap's published
+`MIN_SQRT_RATIO`/`MAX_SQRT_RATIO` constants, the three branches of
+`amountsForLiquidity`, and the mod-2²⁵⁶ wrapping the fee-growth accumulators
+rely on:
+
+```sh
+npx esbuild test/tickmath-check.ts --bundle --format=esm --platform=node \
+  --target=node20 --outfile=test/tickmath-check.bundle.mjs
+node test/tickmath-check.bundle.mjs
 ```
 
 ## Seeding an initial cost basis (e.g. after a token migration)
